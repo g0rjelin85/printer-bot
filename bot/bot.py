@@ -120,7 +120,7 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"/update вызван пользователем {user_id}, запрошен тег: {tag}")
 
     try:
-        fetch_tags()
+        fetch_tags()  # подтягиваем новые теги
 
         # Определяем тег
         if not tag:
@@ -146,10 +146,10 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error("Не удалось определить тег для обновления")
             return
 
-        # Checkout
-        logger.info(f"Переключаемся на тег {tag}")
+        # --- Ключевое изменение: создаём/обновляем ветку deploy ---
+        logger.info(f"Создаём/обновляем ветку deploy на тег {tag}")
         checkout = subprocess.run(
-            ["git", "checkout", f"tags/{tag}", "-f"],
+            ["git", "checkout", "-B", "deploy", tag],
             cwd=PROJECT_PATH,
             capture_output=True,
             text=True
