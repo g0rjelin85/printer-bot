@@ -26,6 +26,11 @@ def escape_markdown(text: str) -> str:
     return re.sub(f'([{"".join(re.escape(c) for c in escape_chars)}])', r'\\\1', text)
 
 
+def fetch_tags():
+    """Подтягивает все теги с GitHub."""
+    subprocess.run(["git", "fetch", "--tags"], cwd=PROJECT_PATH)
+
+
 def get_current_version() -> str:
     """Возвращает текущий git-тег (версию)."""
     result = subprocess.run(
@@ -39,6 +44,7 @@ def get_current_version() -> str:
 
 def get_all_tags() -> list:
     """Возвращает список всех тегов, отсортированных по времени создания."""
+    fetch_tags()  # подтягиваем новые теги перед выводом
     result = subprocess.run(
         ["git", "tag", "--sort=creatordate"],
         cwd=PROJECT_PATH,
@@ -86,8 +92,7 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tag = context.args[0] if context.args else None  # тег из команды, если указан
 
     try:
-        # Подтягиваем все теги
-        subprocess.run(["git", "fetch", "--tags"], cwd=PROJECT_PATH)
+        fetch_tags()  # подтягиваем все новые теги перед обновлением
 
         # Если тег не указан — используем последний
         if not tag:
