@@ -1,0 +1,7 @@
+{
+  "BOT_TOKEN": "ТОКЕН_ВАШЕГО_БОТА",
+  "PROJECT_PATH": "/home/username/printer-bot",
+  "ALLOWED_USERS": [123456789],
+  "SERVICE_NAME": "printerbot.service"
+}
+

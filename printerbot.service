@@ -1,0 +1,13 @@
+[Unit]
+Description=Printer Bot (Telegram)
+After=network.target
+
+[Service]
+WorkingDirectory=/home/gorjelin/printer-bot
+ExecStart=/usr/bin/python3 /home/gorjelin/printer-bot/bot/bot.py
+Restart=always
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+
