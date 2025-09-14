@@ -9,8 +9,7 @@ import re
 # === Загрузка конфигурации ===
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "config.json")
 if not os.path.exists(CONFIG_PATH):
-    sys.exit("❌ Не найден config/config.json. "
-             "Скопируйте config/config.json.example в config/config.json и настройте его.")
+    sys.exit("❌ Не найден config/config.json. Скопируйте config/config.json.example в config/config.json и настройте его.")
 
 with open(CONFIG_PATH, "r") as f:
     CONFIG = json.load(f)
@@ -35,9 +34,21 @@ def get_current_version() -> str:
         capture_output=True,
         text=True
     )
+    return result.stdout.strip() if result.returncode == 0 else "неизвестно"
+
+
+def get_all_tags() -> list:
+    """Возвращает список всех тегов, отсортированных по времени создания."""
+    result = subprocess.run(
+        ["git", "tag", "--sort=creatordate"],
+        cwd=PROJECT_PATH,
+        capture_output=True,
+        text=True
+    )
     if result.returncode == 0:
-        return result.stdout.strip()
-    return "неизвестно"
+        tags = result.stdout.strip().split("\n")
+        return [t for t in tags if t]
+    return []
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -46,8 +57,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 Привет! Я *Printer Bot*.\n"
         f"📦 Текущая версия: *{version}*\n\n"
         f"Доступные команды:\n"
-        f"/update — обновить и перезапустить\n"
-        f"/version — показать текущую версию",
+        f"/update [tag] — обновить и перезапустить (по тегу или последнему)\n"
+        f"/version — показать текущую версию\n"
+        f"/tags — показать доступные версии",
         parse_mode="Markdown"
     )
 
@@ -57,40 +69,48 @@ async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📦 Текущая версия: *{v}*", parse_mode="Markdown")
 
 
+async def tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    all_tags = get_all_tags()
+    if all_tags:
+        await update.message.reply_text("📄 Доступные теги:\n" + "\n".join(all_tags))
+    else:
+        await update.message.reply_text("❌ Не удалось получить список тегов.")
+
+
 async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
         await update.message.reply_text("🚫 У вас нет прав для выполнения этой команды.")
         return
 
+    tag = context.args[0] if context.args else None  # тег из команды, если указан
+
     try:
-        # Подтягиваем теги
+        # Подтягиваем все теги
         subprocess.run(["git", "fetch", "--tags"], cwd=PROJECT_PATH)
 
-        # Определяем последний тег
-        rev_list = subprocess.run(
-            ["git", "rev-list", "--tags", "--max-count=1"],
-            cwd=PROJECT_PATH,
-            capture_output=True,
-            text=True
-        )
-        commit_hash = rev_list.stdout.strip()
-        if not commit_hash:
-            await update.message.reply_text("❌ Не удалось определить последний тег.")
-            return
-
-        latest_tag = subprocess.run(
-            ["git", "describe", "--tags", commit_hash],
-            cwd=PROJECT_PATH,
-            capture_output=True,
-            text=True
-        )
-        tag = latest_tag.stdout.strip()
+        # Если тег не указан — используем последний
         if not tag:
-            await update.message.reply_text("❌ Не удалось определить последний тег.")
+            rev_list = subprocess.run(
+                ["git", "rev-list", "--tags", "--max-count=1"],
+                cwd=PROJECT_PATH,
+                capture_output=True,
+                text=True
+            )
+            commit_hash = rev_list.stdout.strip()
+            latest_tag = subprocess.run(
+                ["git", "describe", "--tags", commit_hash],
+                cwd=PROJECT_PATH,
+                capture_output=True,
+                text=True
+            )
+            tag = latest_tag.stdout.strip()
+
+        if not tag:
+            await update.message.reply_text("❌ Не удалось определить тег для обновления.")
             return
 
-        # Переключаемся на последний тег
+        # Переключение на выбранный тег
         checkout = subprocess.run(
             ["git", "checkout", f"tags/{tag}", "-f"],
             cwd=PROJECT_PATH,
@@ -99,7 +119,7 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         output = escape_markdown(checkout.stdout + checkout.stderr)
 
-        # Рестарт сервиса
+        # Перезапуск сервиса
         restart = subprocess.run(
             ["systemctl", "--user", "restart", SERVICE_NAME],
             capture_output=True,
@@ -114,8 +134,7 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             err_output = escape_markdown(restart.stderr)
             await update.message.reply_text(
-                f"⚠️ Обновлено до версии *{tag}*, "
-                f"но при перезапуске ошибка:\n```\n{err_output}\n```",
+                f"⚠️ Обновлено до версии *{tag}*, но при перезапуске ошибка:\n```\n{err_output}\n```",
                 parse_mode="Markdown"
             )
 
@@ -128,6 +147,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("version", version))
+    app.add_handler(CommandHandler("tags", tags))
     app.add_handler(CommandHandler("update", update_repo))
 
     app.run_polling()
