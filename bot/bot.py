@@ -294,6 +294,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔧 *Управление сервисом:*
 /restart - Перезапустить systemd сервис
 
+⚠️ *Важно:*
+• Команды /update и /restart перезапускают бота
+• После выполнения этих команд бот завершится и перезапустится автоматически
+• Используйте /status для проверки состояния после перезапуска
+
 🔧 *Техническая информация:*
 • Бот работает как systemd сервис
 • Автоматическое обновление из GitHub
@@ -368,6 +373,8 @@ async def restart_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"/restart вызван пользователем {user_id}")
     
     try:
+        await update.message.reply_text("🔄 Перезапуск сервиса Printer Bot...")
+        
         # Обновляем конфигурацию systemd
         daemon_reload = subprocess.run(
             ["systemctl", "--user", "daemon-reload"],
@@ -375,38 +382,25 @@ async def restart_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=True
         )
         
-        # Перезапускаем сервис
-        restart = subprocess.run(
+        if daemon_reload.returncode != 0:
+            logger.warning(f"Ошибка при daemon-reload: {daemon_reload.stderr}")
+        
+        # Перезапускаем сервис в фоне (бот не ждет завершения)
+        subprocess.Popen(
             ["systemctl", "--user", "restart", SERVICE_NAME],
-            capture_output=True,
-            text=True
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
         )
         
-        if restart.returncode == 0:
-            # Проверяем статус после перезапуска
-            time.sleep(2)
-            status_check = get_systemd_status()
-            
-            if status_check["is_active"]:
-                await update.message.reply_text("✅ Сервис успешно перезапущен")
-                logger.info(f"Сервис успешно перезапущен пользователем {user_id}")
-            else:
-                await update.message.reply_text(
-                    f"⚠️ Команда перезапуска выполнена, но сервис не активен.\n"
-                    f"Состояние: {status_check['active_state']}"
-                )
-                logger.warning(f"Сервис перезапущен, но не активен. Состояние: {status_check}")
-        else:
-            err_output = restart.stderr
-            await update.message.reply_text(
-                f"❌ Ошибка при перезапуске сервиса:\n```\n{err_output}\n```",
-                parse_mode="Markdown"
-            )
-            logger.error(f"Ошибка при перезапуске сервиса: {err_output}")
-            
+        logger.info(f"Команда перезапуска отправлена в фоне, завершаем процесс")
+        sys.exit(0)
+        
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка при перезапуске: {str(e)}")
         logger.exception(f"Ошибка при выполнении /restart: {e}")
+        await update.message.reply_text(f"❌ Ошибка при перезапуске: {str(e)}")
+        # Даже при ошибке пытаемся завершиться для перезапуска
+        sys.exit(1)
 
 
 async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -503,44 +497,19 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if daemon_reload.returncode != 0:
             logger.warning(f"Ошибка при daemon-reload: {daemon_reload.stderr}")
         
-        # Затем перезапускаем сервис
-        restart = subprocess.run(
+        # Отправляем сообщение о перезапуске
+        await update.message.reply_text(f"🔄 Перезапуск сервиса для версии *{version_info}*...")
+        
+        # Перезапускаем сервис в фоне (бот не ждет завершения)
+        subprocess.Popen(
             ["systemctl", "--user", "restart", SERVICE_NAME],
-            capture_output=True,
-            text=True
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
         )
-
-        if restart.returncode == 0:
-            # Проверяем, что сервис действительно запустился
-            time.sleep(2)  # Даем время на запуск
-            status_check = get_systemd_status()
-            
-            if status_check["is_active"]:
-                await update.message.reply_text(f"✅ Обновлено до версии *{version_info}*")
-                logger.info(f"Сервис успешно перезапущен, версия {version_info}")
-            else:
-                await update.message.reply_text(
-                    f"⚠️ Обновлено до версии *{version_info}*, но сервис не запустился.\n"
-                    f"Состояние: {status_check['active_state']}"
-                )
-                logger.warning(f"Сервис перезапущен, но не активен. Состояние: {status_check}")
-        else:
-            err_output = restart.stderr
-            stdout_output = restart.stdout
-            
-            # Формируем подробное сообщение об ошибке
-            error_details = f"Код ошибки: {restart.returncode}\n"
-            if stdout_output:
-                error_details += f"Вывод: {stdout_output}\n"
-            if err_output:
-                error_details += f"Ошибка: {err_output}"
-            
-            await update.message.reply_text(
-                f"⚠️ Обновлено до версии *{version_info}*, но ошибка при перезапуске:\n"
-                f"```\n{error_details}\n```",
-                parse_mode="Markdown"
-            )
-            logger.error(f"Ошибка при перезапуске сервиса:\n{error_details}")
+        
+        logger.info(f"Команда перезапуска отправлена в фоне, завершаем процесс для версии {version_info}")
+        sys.exit(0)
 
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка при обновлении: {str(e)}")
