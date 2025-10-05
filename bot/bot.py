@@ -360,6 +360,7 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Определяем цель обновления
+        chosen_tag = None
         if target and target != "latest":
             # Обновление по конкретному тегу
             logger.info(f"Обновление по тегу {target}")
@@ -377,11 +378,29 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"❌ Тег *{target}* не найден.", parse_mode="Markdown")
                 return
             
-            version_info = target
+            chosen_tag = target
+            version_info = chosen_tag
         else:
             # Обновление до последнего тега (по умолчанию)
             logger.info("Обновление до последнего тега")
-            version_info = "последний тег"
+            fetch_tags()
+            rev_list = subprocess.run(
+                ["git", "rev-list", "--tags", "--max-count=1"],
+                cwd=PROJECT_PATH,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            latest_commit = rev_list.stdout.strip()
+            latest_tag_res = subprocess.run(
+                ["git", "describe", "--tags", latest_commit],
+                cwd=PROJECT_PATH,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            chosen_tag = latest_tag_res.stdout.strip()
+            version_info = chosen_tag or "неизвестно"
 
         # Отправляем сообщение о перезапуске
         await update.message.reply_text(f"🔄 Обновление до версии *{version_info}*...")
@@ -389,8 +408,8 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Используем update_bot.sh для безопасного обновления
         update_script = os.path.join(PROJECT_PATH, "scripts", "update_bot.sh")
         cmd = ["bash", update_script]
-        if target and target != "latest":
-            cmd.append(target)
+        if chosen_tag:
+            cmd.append(chosen_tag)
         
         subprocess.Popen(
             cmd,
