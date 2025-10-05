@@ -123,70 +123,58 @@ def get_systemd_status() -> dict:
         return {"is_active": False, "active_state": "error", "sub_state": "error", "load_state": "error"}
 
 
-@router.message(Command("start"))
+@router.message(Command(commands=["start"]))
 async def cmd_start(message: Message) -> None:
     version = get_current_version()
     await message.answer(
-        f"👋 Привет! Я *Printer Bot*.\n📦 Текущая версия: *{escape_markdown(version)}*\n\nИспользуйте /help для просмотра всех команд.",
-        parse_mode="Markdown",
+        f"Привет! Я Printer Bot.\nТекущая версия: {version}\n\nИспользуй /help для списка команд."
     )
     logger.info(f"/start вызван пользователем {message.from_user.id}")
 
 
-@router.message(Command("help"))
+@router.message(Command(commands=["help"]))
 async def cmd_help(message: Message) -> None:
     help_text = (
-        "🤖 *Printer Bot - Справка по командам*\n\n"
-        "📋 *Основные команды:*\n"
-        "/start - Запуск бота и приветствие\n"
-        "/help - Показать эту справку\n"
-        "/version - Показать текущую версию\n"
-        "/status - Статус systemd сервиса и uptime\n\n"
-        "🏷️ *Управление версиями:*\n"
-        "/tags - Показать все доступные теги\n"
-        "/update - Показать 5 последних тегов для обновления\n"
-        "/update <tag> - Обновить до указанного тега\n\n"
-        "🔧 *Управление сервисом:*\n"
-        "/restart - Перезапустить systemd сервис\n\n"
-        "⚠️ *Важно:*\n"
-        "• Команды /update и /restart перезапускают бота\n"
-        "• После выполнения этих команд бот завершится и перезапустится автоматически\n"
-        "• Используйте /status для проверки состояния после перезапуска\n\n"
-        "🔧 *Техническая информация:*\n"
-        "• Обновление выполняется по тегам через scripts/update_bot.sh\n"
+        "/start — приветствие\n"
+        "/help — список команд\n"
+        "/version — текущая версия (git tag)\n"
+        "/status — состояние сервиса\n"
+        "/tags — все теги\n"
+        "/update — показать 5 последних тегов\n"
+        "/update <tag> — обновить до указанного тега\n"
+        "/restart — перезапустить бота\n"
     )
-    await message.answer(help_text, parse_mode="Markdown")
+    await message.answer(help_text)
 
 
-@router.message(Command("version"))
+@router.message(Command(commands=["version"]))
 async def cmd_version(message: Message) -> None:
     v = get_current_version()
-    await message.answer(f"📦 Текущая версия: *{escape_markdown(v)}*", parse_mode="Markdown")
+    await message.answer(f"Текущая версия: {v}")
 
 
-@router.message(Command("tags"))
+@router.message(Command(commands=["tags"]))
 async def cmd_tags(message: Message) -> None:
     tags = get_latest_tags(limit=100)  # полный список может быть большим; ограничим разумно
     if tags:
-        await message.answer("📄 Доступные теги:\n" + "\n".join(tags))
+        await message.answer("Доступные теги:\n" + "\n".join(tags))
     else:
-        await message.answer("❌ Не удалось получить список тегов.")
+        await message.answer("Не удалось получить список тегов.")
 
 
-@router.message(Command("status"))
+@router.message(Command(commands=["status"]))
 async def cmd_status(message: Message) -> None:
     status = get_systemd_status()
     version = get_current_version()
-    status_emoji = "🟢" if status["is_active"] else "🔴"
     status_text = "активен" if status["is_active"] else "неактивен"
     reply = (
-        "📊 *Статус Printer Bot*\n\n"
-        f"{status_emoji} **Systemd сервис:** {status_text}\n"
-        f"📦 **Текущая версия:** `{escape_markdown(version)}`\n"
-        f"🔧 Состояние: `{status['active_state']}` / `{status['sub_state']}`\n"
-        f"Загружен: `{status['load_state']}`"
+        "Статус Printer Bot\n"
+        f"Systemd сервис: {status_text}\n"
+        f"Текущая версия: {version}\n"
+        f"Состояние: {status['active_state']} / {status['sub_state']}\n"
+        f"Загружен: {status['load_state']}"
     )
-    await message.answer(reply, parse_mode="Markdown")
+    await message.answer(reply)
 
 
 def _ensure_allowed(user_id: int) -> bool:
@@ -196,7 +184,7 @@ def _ensure_allowed(user_id: int) -> bool:
     return user_id in ALLOWED_USERS
 
 
-@router.message(Command("restart"))
+@router.message(Command(commands=["restart"]))
 async def cmd_restart(message: Message) -> None:
     if not _ensure_allowed(message.from_user.id):
         await message.answer("🚫 У вас нет прав для выполнения этой команды.")
@@ -219,7 +207,7 @@ async def cmd_restart(message: Message) -> None:
         sys.exit(1)
 
 
-@router.message(Command("update"))
+@router.message(Command(commands=["update"]))
 async def cmd_update(message: Message) -> None:
     if not _ensure_allowed(message.from_user.id):
         await message.answer("🚫 У вас нет прав для выполнения этой команды.")
@@ -236,9 +224,8 @@ async def cmd_update(message: Message) -> None:
                 return
             formatted = "\n".join(f"- {t}" for t in last_tags)
             await message.answer(
-                "🏷️ Последние доступные теги:\n\n" + formatted + "\n\n" +
-                "Укажите тег командой: `/update <tag>`",
-                parse_mode="Markdown",
+                "Последние доступные теги:\n\n" + formatted + "\n\n" +
+                "Укажите тег командой: /update <tag>",
             )
             return
 
@@ -252,10 +239,10 @@ async def cmd_update(message: Message) -> None:
             check=True,
         )
         if not check.stdout.strip():
-            await message.answer(f"❌ Тег *{escape_markdown(tag)}* не найден.", parse_mode="Markdown")
+            await message.answer(f"Тег {tag} не найден.")
             return
 
-        await message.answer(f"🔄 Обновление до версии *{escape_markdown(tag)}*...", parse_mode="Markdown")
+        await message.answer(f"Обновление до версии {tag}...")
         update_script = os.path.join(PROJECT_PATH, "scripts", "update_bot.sh")
         subprocess.Popen(
             ["nohup", "bash", update_script, tag],
@@ -276,6 +263,20 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(router)
     logger.info("Запуск Printer Bot (aiogram 3)...")
+    # Регистрируем команды бота для меню клиента
+    try:
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Приветствие"),
+            BotCommand(command="help", description="Список команд"),
+            BotCommand(command="version", description="Текущая версия"),
+            BotCommand(command="status", description="Статус сервиса"),
+            BotCommand(command="tags", description="Все теги"),
+            BotCommand(command="update", description="Показать 5 последних тегов"),
+            BotCommand(command="restart", description="Перезапуск бота"),
+        ])
+    except Exception as e:
+        logger.warning(f"Не удалось установить команды бота: {e}")
     await dp.start_polling(bot)
 
 
