@@ -5,6 +5,8 @@ import os
 import re
 import subprocess
 import sys
+import socket
+import pathlib
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
@@ -43,9 +45,87 @@ ALLOWED_USERS = CONFIG["ALLOWED_USERS"]
 SERVICE_NAME = CONFIG["SERVICE_NAME"]
 BOT_ADMIN_ID = CONFIG.get("BOT_ADMIN_ID")  # необязательно; при наличии также дает право
 
+PRINTER_NAME = CONFIG["printer_name"]          # например "Brother_HL2132R"
+TEMP_DIR = CONFIG["temp_dir"]
+PRINTER_IP = CONFIG.get("printer_ip", "")
+PRINTER_PORT = int(CONFIG.get("printer_port", 9100))
+
+SUPPORTED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+SUPPORTED_PDF_EXT   = {".pdf"}
+SUPPORTED_WORD_EXT  = {".doc", ".docx", ".rtf", ".odt"}
+SUPPORTED_XL_EXT    = {".xls", ".xlsx", ".csv"}
+
 # === Router ===
 router = Router()
 
+def ensure_dirs():
+    os.makedirs(TEMP_DIR, exist_ok=True)
+
+
+def run(cmd, **kwargs):
+    """Вспомогательная функция для subprocess с логом ошибок."""
+    print(">>>", " ".join(cmd))
+    subprocess.run(cmd, check=True, **kwargs)
+
+
+def convert_to_pdf(input_path: str) -> str:
+    """Преобразует DOC/DOCX/XLS/XLSX/RTF/ODT/CSV → PDF через LibreOffice headless."""
+    pdf_path = os.path.splitext(input_path)[0] + ".pdf"
+    try:
+        run(["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", TEMP_DIR, input_path])
+        return pdf_path
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Ошибка конвертации LibreOffice: {e}")
+
+
+def send_to_printer(path: str):
+    """Отправка файла на печать через CUPS (`lp`) или напрямую по IP (RAW-9100)."""
+    if PRINTER_IP:
+        print(f"Отправка напрямую на {PRINTER_IP}:{PRINTER_PORT}")
+        with open(path, "rb") as f:
+            data = f.read()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(10)
+            s.connect((PRINTER_IP, PRINTER_PORT))
+            s.sendall(data)
+    else:
+        run(["lp", "-d", PRINTER_NAME, path])
+
+
+def process_file(input_path: str):
+    """Определяет тип и печатает документ."""
+    ext = pathlib.Path(input_path).suffix.lower()
+
+    if ext in SUPPORTED_PDF_EXT:
+        send_to_printer(input_path)
+    elif ext in SUPPORTED_IMAGE_EXT:
+        # просто печатаем, CUPS умеет изображения
+        send_to_printer(input_path)
+    elif ext in SUPPORTED_WORD_EXT | SUPPORTED_XL_EXT:
+        pdf_path = convert_to_pdf(input_path)
+        send_to_printer(pdf_path)
+    else:
+        raise RuntimeError(f"Формат '{ext}' не поддерживается.")
+
+
+@router.message(F.content_type == "document")
+async def handle_document(message: Message):
+    ensure_dirs()
+    doc = message.document
+    ext = pathlib.Path(doc.file_name).suffix
+    input_path = os.path.join(TEMP_DIR, f"input{ext}")
+
+    try:
+        await doc.download(destination_file=input_path)
+        process_file(input_path)
+        await message.reply("Документ отправлен на печать ✅")
+    except Exception as e:
+        msg = f"❌ Не удалось напечатать документ.\nОшибка: {e}"
+        await message.reply(msg)
+        print(msg)
+        print(traceback.format_exc())
+
+        
 
 def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'

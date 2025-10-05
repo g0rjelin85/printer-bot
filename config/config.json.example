@@ -3,5 +3,9 @@
   "PROJECT_PATH": "/home/username/printer-bot",
   "ALLOWED_USERS": [123456789],
   "SERVICE_NAME": "printerbot.service",
-  "BOT_ADMIN_ID": 123456789
+  "BOT_ADMIN_ID": 123456789,
+  "printer_name": "Some-Printer",
+  "temp_dir": "temp_dir",
+  "printer_ip": "127.0.0.1",
+  "printer_port": 9100
 }
