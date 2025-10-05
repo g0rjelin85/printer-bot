@@ -25,8 +25,20 @@ else
   TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
 fi
 
+# Проверяем, что тег существует
+if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  echo ">>> Ошибка: тег $TAG не найден в репозитории." >> "$LOG_FILE"
+  exit 1
+fi
+
+echo ">>> Сбрасываем локальные изменения (reset --hard)" >> "$LOG_FILE"
+git reset --hard >> "$LOG_FILE" 2>&1 || true
+echo ">>> Удаляем неотслеживаемые файлы (clean -fd)" >> "$LOG_FILE"
+git clean -fd >> "$LOG_FILE" 2>&1 || true
+
 echo ">>> Обновляем ветку deploy на тег $TAG" >> "$LOG_FILE"
 git checkout -B deploy "tags/$TAG" >> "$LOG_FILE" 2>&1
+echo ">>> Текущая ветка: $(git branch --show-current)" >> "$LOG_FILE"
 
 echo ">>> Устанавливаем зависимости..." >> "$LOG_FILE"
 $PYTHON_PATH -m pip install --user -r requirements.txt >> "$LOG_FILE" 2>&1

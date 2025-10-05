@@ -3,3 +3,7 @@ config/config.json
 __pycache__/
 *.pyc
 
+# Логи (создаются на сервере)
+logs/*.log
+logs/update.log
+logs/printerbot.log
