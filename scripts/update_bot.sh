@@ -7,7 +7,7 @@ PYTHON_PATH="/usr/bin/python3"
 LOG_FILE="$PROJECT_DIR/logs/update.log"
 
 mkdir -p "$(dirname "$LOG_FILE")"
-echo ">>> $(date) Íà÷àëî îáíîâëåíèÿ" >> "$LOG_FILE"
+echo ">>> $(date) ÐÐ°Ñ‡Ð¸Ð½Ð°ÐµÐ¼ Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð¸Ðµ" >> "$LOG_FILE"
 
 cd "$PROJECT_DIR"
 git fetch --tags >> "$LOG_FILE" 2>&1
@@ -18,13 +18,13 @@ else
   TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
 fi
 
-echo ">>> Ïåðåêëþ÷àåìñÿ íà òåã $TAG" >> "$LOG_FILE"
+echo ">>> ÐŸÐµÑ€ÐµÐºÐ»ÑŽÑ‡Ð°ÐµÐ¼ÑÑ Ð½Ð° Ñ‚ÐµÐ³ $TAG" >> "$LOG_FILE"
 git checkout "tags/$TAG" >> "$LOG_FILE" 2>&1
 
-echo ">>> Îáíîâëÿåì çàâèñèìîñòè..." >> "$LOG_FILE"
+echo ">>> Ð£ÑÑ‚Ð°Ð½Ð°Ð²Ð»Ð¸Ð²Ð°ÐµÐ¼ Ð·Ð°Ð²Ð¸ÑÐ¸Ð¼Ð¾ÑÑ‚Ð¸..." >> "$LOG_FILE"
 $PYTHON_PATH -m pip install --user -r requirements.txt >> "$LOG_FILE" 2>&1
 
-echo ">>> Ïåðåçàïóñê systemd..." >> "$LOG_FILE"
+echo ">>> ÐŸÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÐºÐ°ÐµÐ¼ systemd..." >> "$LOG_FILE"
 systemctl --user restart "$SERVICE_NAME" >> "$LOG_FILE" 2>&1
 
-echo ">>> Îáíîâëåíèå çàâåðøåíî óñïåøíî." >> "$LOG_FILE"
+echo ">>> ÐžÐ±Ð½Ð¾Ð²Ð»ÐµÐ½Ð¸Ðµ Ð·Ð°Ð²ÐµÑ€ÑˆÐµÐ½Ð¾ ÑƒÑÐ¿ÐµÑˆÐ½Ð¾." >> "$LOG_FILE"
