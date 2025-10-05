@@ -75,6 +75,7 @@ systemctl --user enable --now printerbot.service
 - `PROJECT_PATH` - Путь к проекту на сервере
 - `ALLOWED_USERS` - Массив ID пользователей с правами на обновление
 - `SERVICE_NAME` - Имя systemd сервиса
+- `BOT_ADMIN_ID` - Администратор бота
 
 ## Обновление
 
