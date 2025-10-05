@@ -123,7 +123,7 @@ def get_systemd_status() -> dict:
         return {"is_active": False, "active_state": "error", "sub_state": "error", "load_state": "error"}
 
 
-@router.message(Command("start"))
+@router.message(Command(commands=["start"]))
 async def cmd_start(message: Message) -> None:
     version = get_current_version()
     await message.answer(
@@ -132,7 +132,7 @@ async def cmd_start(message: Message) -> None:
     logger.info(f"/start вызван пользователем {message.from_user.id}")
 
 
-@router.message(Command("help"))
+@router.message(Command(commands=["help"]))
 async def cmd_help(message: Message) -> None:
     help_text = (
         "/start — приветствие\n"
@@ -147,13 +147,13 @@ async def cmd_help(message: Message) -> None:
     await message.answer(help_text)
 
 
-@router.message(Command("version"))
+@router.message(Command(commands=["version"]))
 async def cmd_version(message: Message) -> None:
     v = get_current_version()
     await message.answer(f"Текущая версия: {v}")
 
 
-@router.message(Command("tags"))
+@router.message(Command(commands=["tags"]))
 async def cmd_tags(message: Message) -> None:
     tags = get_latest_tags(limit=100)  # полный список может быть большим; ограничим разумно
     if tags:
@@ -162,7 +162,7 @@ async def cmd_tags(message: Message) -> None:
         await message.answer("Не удалось получить список тегов.")
 
 
-@router.message(Command("status"))
+@router.message(Command(commands=["status"]))
 async def cmd_status(message: Message) -> None:
     status = get_systemd_status()
     version = get_current_version()
@@ -184,7 +184,7 @@ def _ensure_allowed(user_id: int) -> bool:
     return user_id in ALLOWED_USERS
 
 
-@router.message(Command("restart"))
+@router.message(Command(commands=["restart"]))
 async def cmd_restart(message: Message) -> None:
     if not _ensure_allowed(message.from_user.id):
         await message.answer("🚫 У вас нет прав для выполнения этой команды.")
@@ -207,7 +207,7 @@ async def cmd_restart(message: Message) -> None:
         sys.exit(1)
 
 
-@router.message(Command("update"))
+@router.message(Command(commands=["update"]))
 async def cmd_update(message: Message) -> None:
     if not _ensure_allowed(message.from_user.id):
         await message.answer("🚫 У вас нет прав для выполнения этой команды.")
@@ -263,6 +263,20 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(router)
     logger.info("Запуск Printer Bot (aiogram 3)...")
+    # Регистрируем команды бота для меню клиента
+    try:
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Приветствие"),
+            BotCommand(command="help", description="Список команд"),
+            BotCommand(command="version", description="Текущая версия"),
+            BotCommand(command="status", description="Статус сервиса"),
+            BotCommand(command="tags", description="Все теги"),
+            BotCommand(command="update", description="Показать 5 последних тегов"),
+            BotCommand(command="restart", description="Перезапуск бота"),
+        ])
+    except Exception as e:
+        logger.warning(f"Не удалось установить команды бота: {e}")
     await dp.start_polling(bot)
 
 
