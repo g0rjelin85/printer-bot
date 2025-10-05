@@ -98,18 +98,18 @@ systemctl --user enable --now printerbot.service
    - После ревью смержите в `master`.
 
 3) Создание версии (тега)
-   - Текущая версия: `v0.0.6`.
+   - Текущая версия: `v0.0.7`.
    - Примеры команд:
      ```bash
      git checkout master
      git pull
-     git tag -a v0.0.7 -m "Release v0.0.7"
-     git push origin v0.0.7
+     git tag -a v0.0.8 -m "Release v0.0.8"
+     git push origin v0.0.8
      ```
 
 4) Обновление бота на сервере
-   - Через бота: `/update` или `/update v0.0.7`
-   - Или вручную: `bash scripts/deploy.sh v0.0.7`
+   - Через бота: `/update` или `/update v0.0.8`
+   - Или вручную: `bash scripts/deploy.sh v0.0.8`
 
 ### Ручное обновление
 
