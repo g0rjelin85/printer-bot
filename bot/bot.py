@@ -80,17 +80,16 @@ def convert_to_pdf(input_path: str) -> str:
 
 
 def send_to_printer(path: str):
-    """Отправка файла на печать через CUPS (`lp`) или напрямую по IP (RAW-9100)."""
-    if PRINTER_IP:
-        print(f"Отправка напрямую на {PRINTER_IP}:{PRINTER_PORT}")
-        with open(path, "rb") as f:
-            data = f.read()
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(10)
-            s.connect((PRINTER_IP, PRINTER_PORT))
-            s.sendall(data)
-    else:
-        run(["lp", "-d", PRINTER_NAME, path])
+    """Отправка файла на печать через CUPS (`lp`)."""
+    try:
+        subprocess.run(
+            ["lp", "-d", PRINTER_NAME, path],
+            check=True
+        )
+        logging.info(f"Файл {path} отправлен на печать через CUPS")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Ошибка при печати: {e}")
+        raise
 
 
 def process_file(input_path: str):
