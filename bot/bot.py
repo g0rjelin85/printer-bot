@@ -13,6 +13,7 @@ from logging.handlers import RotatingFileHandler
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.filters import Command
 from aiogram.types import Message
+from aiogram.enums import ContentType
 
 # === Логирование (ротация файлов) ===
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
