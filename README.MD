@@ -34,8 +34,8 @@ cd printer-bot
 ### 2. Настройка конфигурации
 
 ```bash
-cp config/config.json.example config/config.json
 # Отредактируйте config/config.json с вашими данными
+cp config/config.json.example config/config.json
 ```
 
 ### 3. Установка зависимостей
