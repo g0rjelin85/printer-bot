@@ -264,8 +264,8 @@ async def cmd_update(message: Message) -> None:
             start_new_session=True,
         )
         logger.info(f"update_bot.sh запущен, pid={proc.pid}")
-        logger.info(f"Команда обновления до {tag} отправлена, завершаем процесс")
-        os._exit(0)
+        #logger.info(f"Команда обновления до {tag} отправлена, завершаем процесс")
+        #os._exit(0)
     except Exception as e:
         logger.exception(f"Ошибка при выполнении /update: {e}")
         await message.answer(f"❌ Ошибка при обновлении: {e}")
