@@ -10,7 +10,7 @@ import pathlib
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -109,23 +109,22 @@ def process_file(input_path: str):
 
 
 @router.message(F.content_type == "document")
-async def handle_document(message: Message):
+async def handle_document(message: types.Message):
     ensure_dirs()
-    doc = message.document
+    doc = message.document  # types.Document
     ext = pathlib.Path(doc.file_name).suffix
     input_path = os.path.join(TEMP_DIR, f"input{ext}")
 
     try:
-        await doc.download(destination_file=input_path)
+        # здесь используется новый метод download()
+        await doc.download(destination=input_path)
         process_file(input_path)
         await message.reply("Документ отправлен на печать ✅")
     except Exception as e:
         msg = f"❌ Не удалось напечатать документ.\nОшибка: {e}"
         await message.reply(msg)
-        print(msg)
-        print(traceback.format_exc())
+        logger.exception(msg)
 
-        
 
 def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
