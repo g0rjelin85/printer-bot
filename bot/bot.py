@@ -229,29 +229,42 @@ async def cmd_update(message: Message) -> None:
             )
             return
 
-        # Проверяем, что тег существует
+        # Проверяем, что тег существует (повышенное логирование)
         fetch_tags()
+        logger.info(f"Проверяем наличие тега: {tag}; PROJECT_PATH={PROJECT_PATH}")
         check = subprocess.run(
             ["git", "tag", "-l", tag],
             cwd=PROJECT_PATH,
             capture_output=True,
             text=True,
-            check=True,
         )
-        if not check.stdout.strip():
+        logger.info(f"git tag -l {tag} -> rc={check.returncode}, out='{check.stdout.strip()}', err='{check.stderr.strip() if check.stderr else ''}'")
+        if check.returncode != 0 or not check.stdout.strip():
             await message.answer(f"Тег {tag} не найден.")
             return
 
         await message.answer(f"Обновление до версии {tag}...")
         update_script = os.path.join(PROJECT_PATH, "scripts", "update_bot.sh")
-        subprocess.Popen(
-            ["nohup", "bash", update_script, tag],
+        log_file = os.path.join(PROJECT_PATH, "logs", "update.log")
+        try:
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+            with open(log_file, "a", encoding="utf-8") as lf:
+                lf.write(f"\n>>> {datetime.now().isoformat()} Запуск обновления из бота: tag={tag}, user={message.from_user.id}\n")
+                lf.write(f"PROJECT_PATH={PROJECT_PATH}\nSCRIPT={update_script}\n")
+        except Exception as le:
+            logger.warning(f"Не удалось записать пролог в update.log: {le}")
+
+        cmd = ["nohup", "bash", update_script, tag]
+        logger.info(f"Запуск скрипта обновления: cmd={cmd}, cwd={PROJECT_PATH}")
+        proc = subprocess.Popen(
+            cmd,
             cwd=PROJECT_PATH,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        logger.info(f"Команда обновления до {tag} отправлена через update_bot.sh, завершаем процесс")
+        logger.info(f"update_bot.sh запущен, pid={proc.pid}")
+        logger.info(f"Команда обновления до {tag} отправлена, завершаем процесс")
         os._exit(0)
     except Exception as e:
         logger.exception(f"Ошибка при выполнении /update: {e}")
