@@ -109,15 +109,18 @@ def process_file(input_path: str):
         raise RuntimeError(f"Формат '{ext}' не поддерживается.")
 
 
-@router.message(F.content_type == ContentType.DOCUMENT)
-async def handle_document(message: types.Message):
+@router.message(F.document)
+async def handle_document(message: types.Message, bot: Bot):
     ensure_dirs()
-    doc = message.document  # это aiogram.types.Document
+    doc = message.document
     ext = pathlib.Path(doc.file_name).suffix
     input_path = os.path.join(TEMP_DIR, f"input{ext}")
 
     try:
-        await doc.download(destination=input_path)
+        # ✅ Правильная загрузка файла в aiogram 3.x
+        tg_file = await bot.get_file(doc.file_id)
+        await bot.download_file(tg_file.file_path, destination=input_path)
+
         process_file(input_path)
         await message.reply("Документ отправлен на печать ✅")
     except Exception as e:
