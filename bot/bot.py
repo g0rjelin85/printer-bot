@@ -108,9 +108,8 @@ def fetch_tags():
 
 
 def get_current_version() -> str:
-    """Получает текущую версию (тег или master)."""
+    """Получает текущую версию (тег)."""
     try:
-        # Сначала проверяем, есть ли теги
         result = subprocess.run(
             ["git", "describe", "--tags", "--abbrev=0"],
             cwd=PROJECT_PATH,
@@ -120,22 +119,7 @@ def get_current_version() -> str:
         )
         return result.stdout.strip()
     except subprocess.CalledProcessError:
-        # Если тегов нет, проверяем ветку
-        try:
-            result = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=PROJECT_PATH,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            branch = result.stdout.strip()
-            if branch:
-                return f"master ({branch})"
-            else:
-                return "неизвестно"
-        except subprocess.CalledProcessError:
-            return "неизвестно"
+        return "неизвестно"
 
 
 def get_all_tags() -> list:
@@ -153,34 +137,6 @@ def get_all_tags() -> list:
     except subprocess.CalledProcessError as e:
         logger.error(f"Ошибка при получении тегов: {e}")
         return []
-
-
-def fetch_master() -> str:
-    """Подтягивает последние изменения из master."""
-    try:
-        logger.info("Подтягиваем изменения из master...")
-        subprocess.run(["git", "fetch", "origin", "master"], cwd=PROJECT_PATH, check=True)
-        logger.info("Изменения из master успешно подтянуты.")
-        return "success"
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка при git fetch origin master: {e}")
-        return "error"
-
-
-def get_master_commit() -> str:
-    """Получает последний коммит из master."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "origin/master"],
-            cwd=PROJECT_PATH,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return result.stdout.strip()[:8]  # Короткий хеш
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка при получении коммита master: {e}")
-        return "unknown"
 
 
 def get_systemd_status() -> dict:
@@ -289,7 +245,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /tags - Показать все доступные теги
 /update - Обновить до последнего тега
 /update <tag> - Обновить до указанного тега
-/update master - Обновить из ветки master (stable)
 
 🔧 *Управление сервисом:*
 /restart - Перезапустить systemd сервис
@@ -301,10 +256,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🔧 *Техническая информация:*
 • Бот работает как systemd сервис
-• Автоматическое обновление из GitHub
+• Автоматическое обновление из GitHub по тегам
 • Логирование с ротацией файлов
-• Безопасные обновления без detached HEAD
-• Поддержка тегов и master-ветки
+• Безопасные обновления через update_bot.sh
 
 📝 *Права доступа:*
 Команды /update и /restart доступны только авторизованным пользователям."""
@@ -363,7 +317,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def restart_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Перезапускает systemd сервис."""
+    """Перезапускает systemd сервис через update_bot.sh."""
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
         await update.message.reply_text("🚫 У вас нет прав для выполнения этой команды.")
@@ -375,25 +329,16 @@ async def restart_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.message.reply_text("🔄 Перезапуск сервиса Printer Bot...")
         
-        # Обновляем конфигурацию systemd
-        daemon_reload = subprocess.run(
-            ["systemctl", "--user", "daemon-reload"],
-            capture_output=True,
-            text=True
-        )
-        
-        if daemon_reload.returncode != 0:
-            logger.warning(f"Ошибка при daemon-reload: {daemon_reload.stderr}")
-        
-        # Перезапускаем сервис в фоне (бот не ждет завершения)
+        # Используем update_bot.sh для безопасного перезапуска
+        update_script = os.path.join(PROJECT_PATH, "scripts", "update_bot.sh")
         subprocess.Popen(
-            ["systemctl", "--user", "restart", SERVICE_NAME],
+            ["bash", update_script, "restart"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
         
-        logger.info(f"Команда перезапуска отправлена в фоне, завершаем процесс")
+        logger.info(f"Команда перезапуска отправлена через update_bot.sh, завершаем процесс")
         sys.exit(0)
         
     except Exception as e:
@@ -411,28 +356,16 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     target = context.args[0] if context.args else None
-    logger.info(f"/update вызван пользователем {user_id}, запрошена цель: {target}")
+    logger.info(f"/update вызван пользователем {user_id}, запрошен тег: {target}")
 
     try:
         # Определяем цель обновления
-        if target == "master":
-            # Обновление из master
-            logger.info("Обновление из ветки master")
-            fetch_result = fetch_master()
-            if fetch_result != "success":
-                await update.message.reply_text("❌ Ошибка при получении изменений из master.")
-                return
-            
-            commit_hash = get_master_commit()
-            target_ref = "origin/master"
-            version_info = f"master ({commit_hash})"
-            
-        elif target and target != "master":
+        if target and target != "latest":
             # Обновление по конкретному тегу
             logger.info(f"Обновление по тегу {target}")
-            fetch_tags()  # подтягиваем новые теги
             
             # Проверяем, существует ли тег
+            fetch_tags()  # подтягиваем новые теги
             tag_check = subprocess.run(
                 ["git", "tag", "-l", target],
                 cwd=PROJECT_PATH,
@@ -444,71 +377,29 @@ async def update_repo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"❌ Тег *{target}* не найден.", parse_mode="Markdown")
                 return
             
-            target_ref = target
             version_info = target
-            
         else:
             # Обновление до последнего тега (по умолчанию)
             logger.info("Обновление до последнего тега")
-            fetch_tags()  # подтягиваем новые теги
-            
-            rev_list = subprocess.run(
-                ["git", "rev-list", "--tags", "--max-count=1"],
-                cwd=PROJECT_PATH,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            commit_hash = rev_list.stdout.strip()
-            latest_tag = subprocess.run(
-                ["git", "describe", "--tags", commit_hash],
-                cwd=PROJECT_PATH,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            target_ref = latest_tag.stdout.strip()
-            version_info = target_ref
+            version_info = "последний тег"
 
-        if not target_ref:
-            await update.message.reply_text("❌ Не удалось определить цель для обновления.")
-            logger.error("Не удалось определить цель для обновления")
-            return
-
-        # Создаём/обновляем ветку deploy
-        logger.info(f"Создаём/обновляем ветку deploy на {target_ref}")
-        checkout = subprocess.run(
-            ["git", "checkout", "-B", "deploy", target_ref],
-            cwd=PROJECT_PATH,
-            capture_output=True,
-            text=True
-        )
-        logger.info(f"git checkout завершен:\n{checkout.stdout}\n{checkout.stderr}")
-
-        # Перезапуск сервиса
-        logger.info(f"Перезапуск systemd сервиса {SERVICE_NAME}")
-        
-        # Сначала обновляем конфигурацию systemd
-        daemon_reload = subprocess.run(
-            ["systemctl", "--user", "daemon-reload"],
-            capture_output=True,
-            text=True
-        )
-        if daemon_reload.returncode != 0:
-            logger.warning(f"Ошибка при daemon-reload: {daemon_reload.stderr}")
-        
         # Отправляем сообщение о перезапуске
-        await update.message.reply_text(f"🔄 Перезапуск сервиса для версии *{version_info}*...")
+        await update.message.reply_text(f"🔄 Обновление до версии *{version_info}*...")
         
-        # Перезапускаем сервис в фоне (бот не ждет завершения)
+        # Используем update_bot.sh для безопасного обновления
+        update_script = os.path.join(PROJECT_PATH, "scripts", "update_bot.sh")
+        cmd = ["bash", update_script]
+        if target and target != "latest":
+            cmd.append(target)
+        
         subprocess.Popen(
-            ["systemctl", "--user", "restart", SERVICE_NAME],
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
         
-        logger.info(f"Команда перезапуска отправлена в фоне, завершаем процесс для версии {version_info}")
+        logger.info(f"Команда обновления отправлена через update_bot.sh, завершаем процесс для версии {version_info}")
         sys.exit(0)
 
     except Exception as e:
