@@ -2,5 +2,6 @@
   "BOT_TOKEN": "ТОКЕН_ВАШЕГО_БОТА",
   "PROJECT_PATH": "/home/username/printer-bot",
   "ALLOWED_USERS": [123456789],
-  "SERVICE_NAME": "printerbot.service"
+  "SERVICE_NAME": "printerbot.service",
+  "BOT_ADMIN_ID": 123456789
 }
