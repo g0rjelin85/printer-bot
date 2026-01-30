@@ -12,7 +12,7 @@ from logging.handlers import RotatingFileHandler
 
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ContentType
 
 # === Логирование (ротация файлов) ===
@@ -59,6 +59,10 @@ SUPPORTED_XL_EXT    = {".xls", ".xlsx", ".csv"}
 # === Router ===
 router = Router()
 
+# Ожидающие печать: user_id -> {"path": путь к печатаемому файлу, "orientation": "portrait"|"landscape"|None,
+# "copies": int, "page_ranges": str|None, "in_options": bool}
+pending_prints: dict[int, dict] = {}
+
 def ensure_dirs():
     os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -69,63 +73,298 @@ def run(cmd, **kwargs):
     subprocess.run(cmd, check=True, **kwargs)
 
 
+def _pdf_export_filter_options() -> str:
+    """Опции экспорта PDF в наилучшем качестве: без потерь, макс. качество, без уменьшения разрешения."""
+    return (
+        '{"UseLosslessCompression":{"type":"boolean","value":"true"},'
+        '"Quality":{"type":"long","value":"100"},'
+        '"ReduceImageResolution":{"type":"boolean","value":"false"},'
+        '"MaxImageResolution":{"type":"long","value":"1200"}}'
+    )
+
+
 def convert_to_pdf(input_path: str) -> str:
-    """Преобразует DOC/DOCX/XLS/XLSX/RTF/ODT/CSV → PDF через LibreOffice headless."""
-    pdf_path = os.path.splitext(input_path)[0] + ".pdf"
+    """Преобразует DOC/DOCX/XLS/XLSX/RTF/ODT/CSV → PDF через LibreOffice headless в наилучшем качестве."""
+    ext = pathlib.Path(input_path).suffix.lower()
+    # Writer (doc/docx/rtf/odt) и Calc (xls/xlsx/csv) используют разные фильтры
+    if ext in SUPPORTED_XL_EXT:
+        filter_spec = f"pdf:calc_pdf_Export:{_pdf_export_filter_options()}"
+    else:
+        filter_spec = f"pdf:writer_pdf_Export:{_pdf_export_filter_options()}"
+    pdf_path = os.path.join(TEMP_DIR, pathlib.Path(input_path).stem + ".pdf")
     try:
-        run(["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", TEMP_DIR, input_path])
+        run([
+            "libreoffice", "--headless",
+            "--convert-to", filter_spec,
+            "--outdir", TEMP_DIR,
+            input_path
+        ])
         return pdf_path
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Ошибка конвертации LibreOffice: {e}")
 
 
-def send_to_printer(path: str):
-    """Отправка файла на печать через CUPS (`lp`)."""
+def send_to_printer(
+    path: str,
+    copies: int = 1,
+    page_ranges: str | None = None,
+    orientation: str | None = None,
+):
+    """Отправка файла на печать через CUPS (`lp`) в наилучшем качестве.
+    orientation: 'portrait' | 'landscape'
+    page_ranges: например '1-3,5,7'
+    """
     try:
-        subprocess.run(
-            ["lp", "-d", PRINTER_NAME, path],
-            check=True
+        # print-quality=5 — наилучшее качество в CUPS (3=draft, 4=normal, 5=best)
+        cmd = ["lp", "-d", PRINTER_NAME, "-o", "print-quality=5"]
+        if copies > 1:
+            cmd.extend(["-n", str(copies)])
+        if page_ranges:
+            cmd.extend(["-o", f"page-ranges={page_ranges}"])
+        if orientation == "landscape":
+            cmd.extend(["-o", "orientation-requested=4"])  # 4 = landscape
+        elif orientation == "portrait":
+            cmd.extend(["-o", "orientation-requested=3"])  # 3 = portrait
+        cmd.append(path)
+        subprocess.run(cmd, check=True)
+        logging.info(
+            f"Файл {path} отправлен на печать через CUPS (качество: best, copies={copies}, "
+            f"page_ranges={page_ranges!r}, orientation={orientation!r})"
         )
-        logging.info(f"Файл {path} отправлен на печать через CUPS")
     except subprocess.CalledProcessError as e:
         logging.error(f"Ошибка при печати: {e}")
         raise
 
 
-def process_file(input_path: str):
-    """Определяет тип и печатает документ."""
+def prepare_for_print(input_path: str) -> str:
+    """Готовит файл к печати: при необходимости конвертирует в PDF. Возвращает путь к печатаемому файлу."""
     ext = pathlib.Path(input_path).suffix.lower()
+    if ext in SUPPORTED_PDF_EXT or ext in SUPPORTED_IMAGE_EXT:
+        return input_path
+    if ext in SUPPORTED_WORD_EXT | SUPPORTED_XL_EXT:
+        return convert_to_pdf(input_path)
+    raise RuntimeError(f"Формат '{ext}' не поддерживается.")
 
-    if ext in SUPPORTED_PDF_EXT:
-        send_to_printer(input_path)
-    elif ext in SUPPORTED_IMAGE_EXT:
-        # просто печатаем, CUPS умеет изображения
-        send_to_printer(input_path)
-    elif ext in SUPPORTED_WORD_EXT | SUPPORTED_XL_EXT:
-        pdf_path = convert_to_pdf(input_path)
-        send_to_printer(pdf_path)
-    else:
-        raise RuntimeError(f"Формат '{ext}' не поддерживается.")
+
+def process_file(input_path: str, copies: int = 1, page_ranges: str | None = None, orientation: str | None = None):
+    """Определяет тип, готовит файл и печатает документ с опциями."""
+    printable_path = prepare_for_print(input_path)
+    send_to_printer(printable_path, copies=copies, page_ranges=page_ranges, orientation=orientation)
+
+
+def _print_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура: печатать как есть или настроить опции."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🖨 Печатать как есть", callback_data="print_ok"),
+            InlineKeyboardButton(text="⚙ Опции печати", callback_data="print_opt"),
+        ],
+    ])
+
+
+def _print_options_keyboard(orientation: str | None, copies: int, page_ranges: str | None) -> InlineKeyboardMarkup:
+    """Клавиатура выбора опций: ориентация, копии, страницы."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📄 Книжная", callback_data="opt_port"),
+            InlineKeyboardButton(text="📄 Альбомная", callback_data="opt_land"),
+        ],
+        [
+            InlineKeyboardButton(text="1 копия", callback_data="opt_c1"),
+            InlineKeyboardButton(text="2 копии", callback_data="opt_c2"),
+            InlineKeyboardButton(text="5 копий", callback_data="opt_c5"),
+            InlineKeyboardButton(text="10 копий", callback_data="opt_c10"),
+        ],
+        [InlineKeyboardButton(text="Все страницы", callback_data="opt_pages_all")],
+        [
+            InlineKeyboardButton(text="🖨 Печатать с опциями", callback_data="opt_do"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="opt_cancel"),
+        ],
+    ])
+
+
+def _options_summary(orientation: str | None, copies: int, page_ranges: str | None) -> str:
+    ori = "книжная" if orientation == "portrait" else "альбомная" if orientation == "landscape" else "по умолчанию"
+    pages = page_ranges if page_ranges else "все"
+    return f"Ориентация: {ori}\nКопий: {copies}\nСтраницы: {pages}"
 
 
 @router.message(F.document)
 async def handle_document(message: types.Message, bot: Bot):
+    if not _ensure_allowed(message.from_user.id):
+        await message.reply("🚫 У вас нет прав для печати.")
+        return
     ensure_dirs()
     doc = message.document
-    ext = pathlib.Path(doc.file_name).suffix
-    input_path = os.path.join(TEMP_DIR, f"input{ext}")
+    ext = pathlib.Path(doc.file_name).suffix.lower()
+    if ext not in SUPPORTED_PDF_EXT | SUPPORTED_IMAGE_EXT | SUPPORTED_WORD_EXT | SUPPORTED_XL_EXT:
+        await message.reply(f"❌ Формат {ext} не поддерживается.")
+        return
+    input_path = os.path.join(TEMP_DIR, f"input_{message.from_user.id}{ext}")
 
     try:
-        # ✅ Правильная загрузка файла в aiogram 3.x
         tg_file = await bot.get_file(doc.file_id)
         await bot.download_file(tg_file.file_path, destination=input_path)
-
-        process_file(input_path)
-        await message.reply("Документ отправлен на печать ✅")
+        printable_path = prepare_for_print(input_path)
+        uid = message.from_user.id
+        pending_prints[uid] = {
+            "path": printable_path,
+            "orientation": None,
+            "copies": 1,
+            "page_ranges": None,
+            "in_options": False,
+        }
+        await message.reply(
+            "Документ готов к печати. Печатать как есть или настроить опции (страницы, ориентация, копии)?",
+            reply_markup=_print_confirm_keyboard(),
+        )
     except Exception as e:
-        msg = f"❌ Не удалось напечатать документ.\nОшибка: {e}"
+        msg = f"❌ Не удалось подготовить документ.\nОшибка: {e}"
         await message.reply(msg)
         logger.exception(msg)
+
+
+@router.callback_query(F.data == "print_ok")
+async def callback_print_ok(callback: CallbackQuery):
+    """Печатать как есть."""
+    uid = callback.from_user.id
+    if not _ensure_allowed(uid):
+        await callback.answer("🚫 Нет прав.", show_alert=True)
+        return
+    job = pending_prints.pop(uid, None)
+    if not job:
+        await callback.answer("Документ уже напечатан или отменён.", show_alert=True)
+        return
+    try:
+        send_to_printer(job["path"])
+        await callback.message.edit_text("Документ отправлен на печать ✅")
+        await callback.answer("Отправлено на печать")
+    except Exception as e:
+        pending_prints[uid] = job
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
+        logger.exception("Ошибка печати: %s", e)
+
+
+@router.callback_query(F.data == "print_opt")
+async def callback_print_opt(callback: CallbackQuery):
+    """Показать опции печати."""
+    uid = callback.from_user.id
+    if not _ensure_allowed(uid):
+        await callback.answer("🚫 Нет прав.", show_alert=True)
+        return
+    job = pending_prints.get(uid)
+    if not job:
+        await callback.answer("Документ уже напечатан или отменён.", show_alert=True)
+        return
+    job["in_options"] = True
+    opts = _print_options_keyboard(job["orientation"], job["copies"], job["page_ranges"])
+    summary = _options_summary(job["orientation"], job["copies"], job["page_ranges"])
+    await callback.message.edit_text(
+        f"Настройте опции печати.\n\nТекущие:\n{summary}\n\nСтраницы можно ввести сообщением (например: 1-3,5,7).",
+        reply_markup=opts,
+    )
+    await callback.answer()
+
+
+def _parse_page_ranges(text: str) -> str | None:
+    """Парсит строку вида '1-3,5,7' или 'все' / 'all'. Возвращает None если не похоже на диапазон."""
+    t = text.strip().lower()
+    if t in ("все", "all", ""):
+        return None
+    # Допустимы цифры, запятые, дефисы, пробелы
+    if not re.match(r"^[\d\s,\-]+$", t):
+        return None
+    # Нормализуем: убираем лишние пробелы
+    parts = [p.strip() for p in t.split(",") if p.strip()]
+    if not parts:
+        return None
+    return ",".join(parts)
+
+
+@router.callback_query(F.data.startswith("opt_"))
+async def callback_print_options(callback: CallbackQuery):
+    """Обработка кнопок опций: ориентация, копии, страницы, печать, отмена."""
+    uid = callback.from_user.id
+    if not _ensure_allowed(uid):
+        await callback.answer("🚫 Нет прав.", show_alert=True)
+        return
+    job = pending_prints.get(uid)
+    if not job:
+        await callback.answer("Документ уже напечатан или отменён.", show_alert=True)
+        return
+    data = callback.data
+    if data == "opt_port":
+        job["orientation"] = "portrait"
+    elif data == "opt_land":
+        job["orientation"] = "landscape"
+    elif data == "opt_c1":
+        job["copies"] = 1
+    elif data == "opt_c2":
+        job["copies"] = 2
+    elif data == "opt_c5":
+        job["copies"] = 5
+    elif data == "opt_c10":
+        job["copies"] = 10
+    elif data == "opt_pages_all":
+        job["page_ranges"] = None
+    elif data == "opt_cancel":
+        pending_prints.pop(uid, None)
+        await callback.message.edit_text("Печать отменена.")
+        await callback.answer()
+        return
+    elif data == "opt_do":
+        path = job["path"]
+        pending_prints.pop(uid, None)
+        try:
+            send_to_printer(
+                path,
+                copies=job["copies"],
+                page_ranges=job["page_ranges"],
+                orientation=job["orientation"],
+            )
+            await callback.message.edit_text(
+                f"Документ отправлен на печать с опциями ✅\n{_options_summary(job['orientation'], job['copies'], job['page_ranges'])}"
+            )
+            await callback.answer("Отправлено на печать")
+        except Exception as e:
+            pending_prints[uid] = job
+            await callback.answer(f"Ошибка: {e}", show_alert=True)
+            logger.exception("Ошибка печати с опциями: %s", e)
+        return
+    else:
+        await callback.answer()
+        return
+    # Обновляем сообщение с текущими опциями
+    opts = _print_options_keyboard(job["orientation"], job["copies"], job["page_ranges"])
+    summary = _options_summary(job["orientation"], job["copies"], job["page_ranges"])
+    await callback.message.edit_text(
+        f"Настройте опции печати.\n\nТекущие:\n{summary}\n\nСтраницы можно ввести сообщением (например: 1-3,5,7).",
+        reply_markup=opts,
+    )
+    await callback.answer()
+
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def handle_print_options_text(message: types.Message):
+    """Ввод диапазона страниц, когда пользователь в режиме опций."""
+    uid = message.from_user.id
+    job = pending_prints.get(uid)
+    if not job or not job.get("in_options"):
+        return
+    text = (message.text or "").strip()
+    parsed = _parse_page_ranges(message.text or "")
+    if parsed is not None:
+        job["page_ranges"] = parsed
+    elif text.lower() in ("все", "all", ""):
+        job["page_ranges"] = None
+    else:
+        return
+    summary = _options_summary(job["orientation"], job["copies"], job["page_ranges"])
+    opts = _print_options_keyboard(job["orientation"], job["copies"], job["page_ranges"])
+    await message.reply(
+        f"Страницы обновлены.\n\nТекущие опции:\n{summary}",
+        reply_markup=opts,
+    )
 
 
 def escape_markdown(text: str) -> str:
@@ -220,6 +459,7 @@ async def cmd_help(message: Message) -> None:
         "/help — список команд\n"
         "/version — текущая версия (git tag)\n"
         "/status — состояние сервиса\n"
+        "Отправьте документ — бот предложит печатать как есть или настроить опции (страницы, ориентация, копии).\n"
         "/tags — все теги\n"
         "/update — показать 5 последних тегов\n"
         "/update <tag> — обновить до указанного тега\n"
